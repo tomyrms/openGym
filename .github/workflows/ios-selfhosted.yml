@@ -1,13 +1,9 @@
 name: Build openGym iOS IPA
 
-# Port of the maintainer's GitLab `build:ios` job for a self-hosted macOS runner.
+# Port of the maintainer's GitLab `build:ios` job, adapted for a GitHub-hosted
+# macOS runner (free for public repos — no self-hosted Mac needed).
 # Produces an UNSIGNED .ipa you can import into iLoader, which signs it with your
 # Apple ID before installing on the iPhone.
-#
-# Requires:
-#   - a GitHub self-hosted runner on your Mac, online, with the `macOS` label
-#     (default labels on macOS runners: self-hosted, macOS, ARM64/X64)
-#   - Xcode 15+ and CocoaPods (the workflow installs CocoaPods via Homebrew if missing)
 #
 # Verified against the openGym repo (main):
 #   - frontend/ios/App/App.xcodeproj, App.xcworkspace and Podfile are committed
@@ -26,8 +22,7 @@ concurrency:
 
 jobs:
   build-ios:
-    # A GitHub self-hosted macOS runner gets these standard labels automatically.
-    runs-on: [self-hosted, macOS]
+    runs-on: macos-15
     timeout-minutes: 120
 
     defaults:
