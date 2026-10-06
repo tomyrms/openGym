@@ -1,0 +1,118 @@
+name: Build openGym iOS IPA
+
+# Port of the maintainer's GitLab `build:ios` job for a self-hosted macOS runner.
+# Produces an UNSIGNED .ipa you can import into iLoader, which signs it with your
+# Apple ID before installing on the iPhone.
+#
+# Requires:
+#   - a GitHub self-hosted runner on your Mac, online, with the `macOS` label
+#     (default labels on macOS runners: self-hosted, macOS, ARM64/X64)
+#   - Xcode 15+ and CocoaPods (the workflow installs CocoaPods via Homebrew if missing)
+#
+# Verified against the openGym repo (main):
+#   - frontend/ios/App/App.xcodeproj, App.xcworkspace and Podfile are committed
+#   - frontend/package.json has `build:mobile` (vite build + cap sync)
+#   - frontend/package-lock.json exists (npm cache)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios:
+    # A GitHub self-hosted macOS runner gets these standard labels automatically.
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 120
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Check Xcode and CocoaPods
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          if ! command -v pod >/dev/null 2>&1; then
+            if command -v brew >/dev/null 2>&1; then
+              brew install cocoapods
+            else
+              echo "CocoaPods is missing and Homebrew is not installed." >&2
+              exit 1
+            fi
+          fi
+          pod --version
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build Capacitor mobile bundle
+        working-directory: frontend
+        run: npm run build:mobile
+
+      - name: Archive unsigned iOS app
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+
+          VER="$(node -p "require('./package.json').version")"
+          BUILD="${GITHUB_RUN_NUMBER}"
+
+          cd ios/App
+
+          # cap sync (run by build:mobile) normally runs CocoaPods, but this
+          # ensures the workspace exists before xcodebuild.
+          pod install
+
+          rm -rf build Payload
+
+          xcodebuild \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/build/App.xcarchive" \
+            MARKETING_VERSION="$VER" \
+            CURRENT_PROJECT_VERSION="$BUILD" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            archive
+
+          APP_PATH="$PWD/build/App.xcarchive/Products/Applications/App.app"
+          test -d "$APP_PATH"
+
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+
+          IPA="openGym-${VER}-unsigned.ipa"
+          zip -qry "$IPA" Payload
+          shasum -a 256 "$IPA" > "${IPA}.sha256"
+
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          mv "$IPA" "${IPA}.sha256" "$GITHUB_WORKSPACE/artifacts/"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: openGym-iOS-unsigned
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 30
